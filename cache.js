@@ -1,5 +1,6 @@
 var _ = require('underscore'),
 	util = require('util'),
+    events = require('events').EventEmitter,
     CLOCKSPEED = 1000
 	;
 
@@ -281,9 +282,9 @@ var asSchemaFn = function () {
 
         //console.log('initialised: ' + util.inspect(my));
     }
-    this.report = function (initial, updatedProps, conn) {
+    this.report = function (initial, updatedProps, cbReport) {
         var my = this;
-        var report = { initial: initial };
+        var report = { isInitial: initial };
         var my = this;
         this.iterateCacheProperties(function(prop, propnum){
             var propname = prop.schema.name;
@@ -294,11 +295,7 @@ var asSchemaFn = function () {
                 }
             }
         })
-        console.log('\nreport: ' + util.inspect(report));
-
-        if(conn && conn.write) conn.write(JSON.stringify(report));
-        
-
+        cbReport(report);
     }
     this.reportPropYN = function (initial, updatedProps, propnum) {
         if(initial) return true;
@@ -344,10 +341,11 @@ var asSchemaFn = function () {
             (ii) Subscribe 'si100', 'si101' and 'si102'
 ==============================================================================================================
 */
-var Cache = function (connection) {
-    this.connection = connection;
+var Cache = function (id) {
+    this.id = id;
     this.reset();
 };
+util.inherits(Cache, events);
 Cache.prototype.reset = function () {
     this.schema = {};
     this.collection = [];
@@ -356,30 +354,31 @@ Cache.prototype.reset = function () {
     this.iteration = 0;
 };
 Cache.prototype.register = function (prefix, schema) {
-    this.log('register', prefix + ' ' + util.inspect(schema));
-    var itemSchema = this.parseSchema(schema);
-    this.schema[prefix] = itemSchema;
+    if(!this.schema[prefix]) {
+        this.log('register', prefix + ' ' + util.inspect(schema));
+        var itemSchema = this.parseSchema(schema);
+        this.schema[prefix] = itemSchema;
+    }
 };
-Cache.prototype.subscribe = function (id, options) {
+Cache.prototype.subscribe = function (id, requestId, options) {
     options = _.extend({volatility:null, overrides: null}, options);
-    if(this.collectionIndex[id]) {
+    var item = this.collectionIndex[id];
+    if(item) {
         this.log('subscribe', id + ' - already subscribed');
     }
     else
     {
         this.log('subscribe', id + ' - creating new subscription');
-        var prefix = id.match(/^\D+/);
+        var prefix = id.match(/^\D+/)[0];
         //console.log('prefix=' + prefix);
         var schema = this.schema[prefix];
         if(schema) {
-            var item = new schema(id, options);
+            item = new schema(id, options);
             this.collection.push(item);
             this.collectionIndex[id] = item;
         }
     }
-
-    var initialUpdate = item.report(true, null, this.connection);
-
+    this.reportItem(item, true, null, requestId);
     this.start();
 };
 Cache.prototype.updateCache = function () {
@@ -388,10 +387,15 @@ Cache.prototype.updateCache = function () {
     _.each(this.collection, function(item){
         var updatedprops = item.update(iteration);
         if(updatedprops) {
-            //console.log('my.connection=' + my.connection);
-            item.report(false, updatedprops, my.connection);
+            my.reportItem(item, false, updatedprops);
         }
         
+    });
+};
+Cache.prototype.reportItem = function(item, initial, updatedprops, requestId) {
+    var my = this;
+    item.report(initial, updatedprops, function(report){
+        my.emit('update', {update: report, requestId: requestId || 0});    
     });
 };
 Cache.prototype.start = function () {
@@ -407,7 +411,7 @@ Cache.prototype.stop = function () {
     this.reset();
 };
 Cache.prototype.log = function (type, detail) {
-    console.log('(' + this.connection.connectionId + ') ' + type.toUpperCase() + ' - ' + (detail || ''));
+    console.log('(Cache ' + this.id + ') ' + type.toUpperCase() + ' - ' + (detail || ''));
 };
 Cache.prototype.parseSchema = function (schema) {
 

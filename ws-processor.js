@@ -106,12 +106,13 @@ WsProcessor.prototype.send = function(buffer) {
 	var len = buffer.length,
 		headerLen = 2;
 
-	if(len > 125 && len < 65535) {
-		headerLen += 2;
-	}
-	else {
+	if(len > 65535) {
 		this.log('send', 'Unable to send, message too big.');
 		return;
+	}
+
+	if(len > 125) {
+		headerLen += 2;
 	}
 
 	var header = new Buffer(headerLen);
@@ -191,7 +192,7 @@ HybiWsProcessor.prototype.log = function(type, detail) {
 };
 HybiWsProcessor.prototype.process = function(buffer, offset, total) {
 	this.log('process', (total - offset) + ' bytes received for processing');
-
+	console.log(buffer);
 	var b1 = buffer[offset],
 		maskOpCode = 15;
 

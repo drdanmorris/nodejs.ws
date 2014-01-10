@@ -33,16 +33,91 @@ ViewReference.prototype.toString = function () {
 
 var Session = function(connection) {
 	this.sessionid = sessionid++;
-	this.cache = new Cache(connection);
+	this.cache = new Cache(connection.connectionId);
+	this.cache.on('update', this.onCacheUpdate.bind(this));
 	this.connection = connection;
 	connection.on('data', this.onData.bind(this));
 	this.configureRequestProcessors();
 };
+Session.prototype.onCacheUpdate = function(data) {
+	var res = {
+		data: data.update,
+		responseId: data.requestId,
+		isInitial: data.update.isInitial
+	};
+	this.connection.send(res);
+};
 Session.prototype.configureRequestProcessors = function() {
+	var my = this;
 	this.requestProcessor = {
 		subscribe: function(request) {
-			var vref = new ViewReference(request.vref);
-			return viewFactory.getView(vref);
+			var view = viewFactory.getView(request.vref);
+			this.sendView(view, request);
+		},
+		sendView: function(view, request) {
+			var res = {
+				view: view,
+				isInitial: true,
+				responseId: request.requestId
+			};
+			//this.log('Response', util.inspect(res));
+
+			this.findDrefsForView(view);
+			my.connection.send(res);
+			this.sendDrefsForView(view, request.requestId);
+			
+		},
+		findDrefsForView: function(view) {
+			var drefs = [];
+			this.findDrefs(view, drefs);
+			if(drefs.length > 0) {
+				view.drefs = drefs;
+			}
+		},
+		sendDrefsForView: function(view, requestId) {
+			if(view.drefs) {
+				for(var i = 0; i < view.drefs.length; i++) {
+					var dref = view.drefs[i];
+					this.subscribeToDref(dref, requestId);
+				}
+			}
+		},
+		findDrefs: function(obj, drefs) {
+			for(var prop in obj) {
+				if(typeof obj[prop] === 'object') {
+					this.findDrefs(obj[prop], drefs);
+				}
+				else if(prop === 'dref') drefs.push(obj[prop]);
+			}
+		},
+		subscribeToDref: function(dref, requestId) {
+			this.registerSchema(dref);
+			my.cache.subscribe(dref, requestId);
+		},
+		registerSchema: function(dref) {
+			var prefix = dref.match(/^\D+/)[0];
+			if(!this.registeredPrefixes) this.registeredPrefixes = {};
+			if(!this.registeredPrefixes[prefix]) {
+				var schema = null;
+				switch(prefix) {
+					case 'si' :
+						schema = {
+				    		dref: '$[=id]*',
+				            title: '$[string(Spot, {3:U}/{3:U})]',  
+				            b: '[double(5:3>1:1)]',
+				            a: '[=b+3]',
+				            chg: '[chg(b)]',
+				            chk: '[int(1-100)]'
+				    	};
+						break;
+				}
+
+				if(schema) {
+					my.log('registerSchema', prefix);
+					my.cache.register(prefix, schema);
+					this.registeredPrefixes[prefix] = schema;
+				} 
+			}
 		}
 	};
 };
@@ -51,15 +126,7 @@ Session.prototype.onData = function(buffer){
 		request = JSON.parse(json);
 
 	this.log('Request', util.inspect(request));
-	var view = this.requestProcessor[request.cmd](request);
-	view.vref = request.vref;
-	var res = {
-		view: view,
-		isInitial: true,
-		responseId: request.requestId
-	};
-	//this.log('Response', util.inspect(res));
-	this.connection.send(res);
+	this.requestProcessor[request.cmd](request);
 };
 Session.prototype.log = function(type, detail) {
     console.log('[Session ' + this.sessionid + '] ' + type.toUpperCase() + ' - ' + (detail || '') );
@@ -72,7 +139,10 @@ Session.prototype.end = function(data){
 var viewFactory = {
 
 	getView: function(vref) {
-		return this[vref.type](vref);
+		vref = new ViewReference(vref);
+		var view = this[vref.type](vref);
+		view.vref = vref.toString();
+		return view;
 	},
 
 	menu: function(vref) {
@@ -91,10 +161,11 @@ var viewFactory = {
         {
         	return {
 				title : 'Popular Markets',
+				navigateVref: "price/trade/",
 				items: [
-					{title: "Spot, EUR/GBP", navigateVref: "price/trade/si1000", bid:1.01, ask:1.03, dref:"si1000"},
-		            {title: "Spot, USD/EUR", navigateVref: "price/trade/si1001", bid:2.01, ask:2.03, dref:"si1001"},
-		            {title: "Spot, NZD/AUD", navigateVref: "price/trade/si1002", bid:3.01, ask:3.03, dref:"si1002"}
+					{ dref:"si1000" },
+		            { dref:"si1001" },
+		            { dref:"si1002" }
 				]
 			};
 		}
@@ -102,10 +173,11 @@ var viewFactory = {
         {
         	return {
 				title : 'Top Risers',
+				navigateVref: "price/trade/",
 				items: [
-					{title: "Spot, SWF/GBP", navigateVref: "price/trade/si1100", bid:1.01, ask:1.03, dref:"si1100"},
-		            {title: "Spot, USD/SWK", navigateVref: "price/trade/si1101", bid:2.01, ask:2.03, dref:"si1101"},
-		            {title: "Spot, RUS/AUD", navigateVref: "price/trade/si1102", bid:3.01, ask:3.03, dref:"si1102"}
+					{ dref:"si1100" },
+		            { dref:"si1101" },
+		            { dref:"si1102" }
 				]
 			};
 		}
@@ -113,10 +185,11 @@ var viewFactory = {
         {
         	return {
 				title : 'Top Fallers',
+				navigateVref: "price/trade/",
 				items: [
-					{title: "Spot, KTG/SWE", navigateVref: "price/trade/si1200", bid:1.01, ask:1.03, dref:"si1200"},
-		            {title: "Spot, USD/YEN", navigateVref: "price/trade/si1201", bid:2.01, ask:2.03, dref:"si1201"},
-		            {title: "Spot, AUD/HKD", navigateVref: "price/trade/si1202", bid:3.01, ask:3.03, dref:"si1202"}
+					{ dref:"si1200" },
+		            { dref:"si1201" },
+		            { dref:"si1202" }
 				]
 			};
 		}	

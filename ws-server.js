@@ -136,6 +136,7 @@ Connection.prototype.handleSocketClose = function() {
 };
 Connection.prototype.handleSocketError = function(data) {
     this.log('error', data);
+    this.close();
 };
 Connection.prototype.handleWsData = function(data) {
     this.log('wsdata', data);
