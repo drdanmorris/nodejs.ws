@@ -405,10 +405,13 @@ Cache.prototype.start = function () {
     this.started = true;
 };
 Cache.prototype.stop = function () {
-    if(!this.started) return;
     this.log('stopping cache');
     clearInterval(this.interval);
     this.reset();
+};
+Cache.prototype.destroy = function () {
+    this.stop();
+    this.removeAllListeners();
 };
 Cache.prototype.log = function (type, detail) {
     console.log('(Cache ' + this.id + ') ' + type.toUpperCase() + ' - ' + (detail || ''));

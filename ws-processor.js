@@ -99,7 +99,7 @@ WsProcessor.prototype.process = function() {
 };
 WsProcessor.prototype.send = function(buffer) {
     
-    this.log('send', buffer.length + ' bytes to send');
+    // this.log('send', buffer.length + ' bytes to send');
 
 	// create header
 	// 1000 0001  = FIN + TEXT = 129
@@ -192,7 +192,7 @@ HybiWsProcessor.prototype.log = function(type, detail) {
 };
 HybiWsProcessor.prototype.process = function(buffer, offset, total) {
 	this.log('process', (total - offset) + ' bytes received for processing');
-	console.log(buffer);
+	// console.log(buffer);
 	var b1 = buffer[offset],
 		maskOpCode = 15;
 

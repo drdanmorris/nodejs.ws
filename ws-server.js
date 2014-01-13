@@ -31,7 +31,7 @@ WsServer.prototype.onConnectionError = function(err) {
     this.emit('error', err.message);
 };
 WsServer.prototype.onConnectionClose = function(connectionId) {
-    this.emit('close');
+    this.emit('close', connectionId);
     this.tidyConnection(connectionId);
 };
 WsServer.prototype.tidyConnection = function(connectionId) {
@@ -82,6 +82,7 @@ Connection.prototype.__write = function(data) {
 Connection.prototype.send = function(data) {
     if(typeof data === 'object') data = JSON.stringify(data);
     if(typeof data === 'string') data = new Buffer(data, 'utf8');
+    //this.log('send', data);
     this.wsproc.send(data);
 };
 Connection.prototype.close = function() {

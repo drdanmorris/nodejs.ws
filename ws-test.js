@@ -6,13 +6,20 @@ var wsServer = require('./ws-server'),
     PORT = 8081;
 
 var argv = process.argv,
-	session,
+	sessions = [],
 	sessionid = 1,
 	server = new wsServer();
 
 
 server.on('connection', function(connection) {
-	session = new Session(connection);
+	sessions.push(new Session(connection));
+});
+server.on('close', function(connectionId) {
+	for(var i = 0; i < sessions.length; i++) {
+		if(sessions[i].connection.connectionId === connectionId) {
+			sessions.splice[i,1];
+		}
+	}
 });
 server.start(argv[2] || PORT, argv[3] || HOST);
 
@@ -36,7 +43,8 @@ var Session = function(connection) {
 	this.cache = new Cache(connection.connectionId);
 	this.cache.on('update', this.onCacheUpdate.bind(this));
 	this.connection = connection;
-	connection.on('data', this.onData.bind(this));
+	connection.on('data', this.onConnectionData.bind(this));
+	connection.on('close', this.onConnectionClose.bind(this));
 	this.configureRequestProcessors();
 };
 Session.prototype.onCacheUpdate = function(data) {
@@ -54,6 +62,31 @@ Session.prototype.configureRequestProcessors = function() {
 			var view = viewFactory.getView(request.vref);
 			this.sendView(view, request);
 		},
+		registerSchema: function(dref) {
+			var prefix = dref.match(/^\D+/)[0];
+			if(!this.registeredPrefixes) this.registeredPrefixes = {};
+			if(!this.registeredPrefixes[prefix]) {
+				var schema = null;
+				switch(prefix) {
+					case 'si' :
+						schema = {
+				    		dref: '$[=id]*',
+				            title: '$[string(Spot, {3:U}/{3:U})]',  
+				            b: '[double(5:3>1:1)]',
+				            a: '[=b+3]',
+				            chg: '[chg(b)]',
+				            chk: '[int(1-100)]'
+				    	};
+						break;
+				}
+
+				if(schema) {
+					my.log('registerSchema', prefix);
+					my.cache.register(prefix, schema);
+					this.registeredPrefixes[prefix] = schema;
+				} 
+			}
+		},
 		sendView: function(view, request) {
 			var res = {
 				view: view,
@@ -61,6 +94,8 @@ Session.prototype.configureRequestProcessors = function() {
 				responseId: request.requestId
 			};
 			//this.log('Response', util.inspect(res));
+
+			// TODO...unsubscribe from existing drefs in cache
 
 			this.findDrefsForView(view);
 			my.connection.send(res);
@@ -93,35 +128,11 @@ Session.prototype.configureRequestProcessors = function() {
 		subscribeToDref: function(dref, requestId) {
 			this.registerSchema(dref);
 			my.cache.subscribe(dref, requestId);
-		},
-		registerSchema: function(dref) {
-			var prefix = dref.match(/^\D+/)[0];
-			if(!this.registeredPrefixes) this.registeredPrefixes = {};
-			if(!this.registeredPrefixes[prefix]) {
-				var schema = null;
-				switch(prefix) {
-					case 'si' :
-						schema = {
-				    		dref: '$[=id]*',
-				            title: '$[string(Spot, {3:U}/{3:U})]',  
-				            b: '[double(5:3>1:1)]',
-				            a: '[=b+3]',
-				            chg: '[chg(b)]',
-				            chk: '[int(1-100)]'
-				    	};
-						break;
-				}
-
-				if(schema) {
-					my.log('registerSchema', prefix);
-					my.cache.register(prefix, schema);
-					this.registeredPrefixes[prefix] = schema;
-				} 
-			}
 		}
+		
 	};
 };
-Session.prototype.onData = function(buffer){
+Session.prototype.onConnectionData = function(buffer){
 	var json = buffer.toString('utf8'),
 		request = JSON.parse(json);
 
@@ -132,6 +143,10 @@ Session.prototype.log = function(type, detail) {
     console.log('[Session ' + this.sessionid + '] ' + type.toUpperCase() + ' - ' + (detail || '') );
 };
 Session.prototype.end = function(data){
+};
+Session.prototype.onConnectionClose = function(){
+	this.log('onConnectionClose', 'TODO - stop cache for this connection');
+	this.cache.destroy();
 };
 
 
@@ -144,6 +159,37 @@ var viewFactory = {
 		view.vref = vref.toString();
 		return view;
 	},
+
+	price: function(vref) {
+		if(vref.subtype === 'trade') {
+			var icon1 = 'icon1', icon2 = 'icon2';
+			
+			switch(vref.id) {
+				case 'si1001':
+					icon1 = 'icon3';
+					icon2 = 'icon4';
+					break;
+				case 'si1002':
+					icon1 = 'icon2';
+					icon2 = 'icon3';
+					break;
+			}
+
+			return {
+				item: { dref:vref.id },
+				icon1: icon1,
+				icon2: icon2
+			};
+		}
+		else if(vref.subtype === 'info') {
+			return {
+				items: [
+					{ dref:vref.id }
+				]
+			};
+		}
+	},
+
 
 	menu: function(vref) {
 		return {
@@ -165,7 +211,16 @@ var viewFactory = {
 				items: [
 					{ dref:"si1000" },
 		            { dref:"si1001" },
-		            { dref:"si1002" }
+		            { dref:"si1002" },
+		            { dref:"si1003" },
+		            { dref:"si1004" },
+		            { dref:"si1005" },
+		            { dref:"si1006" },
+		            { dref:"si1007" },
+		            { dref:"si1008" },
+		            { dref:"si1009" },
+		            { dref:"si1010" },
+		            { dref:"si1011" }
 				]
 			};
 		}
