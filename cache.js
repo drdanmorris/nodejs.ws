@@ -11,51 +11,87 @@ var _ = require('underscore'),
 ==============================================================================================================
 */
 
+var regexForDoubleExpression = /(\d+)\:(\d+)(?:>(\d+)\:(\d+))?/,
+    regexForIntExpression = /(\d+)(?:-(\d+))?(?:>(\d+)(?:-(\d+))?)?/;
+
+
 // parse the definition of an Item Property to yeild a PropertySchema object for the Property.
-function parsePropertyDefinition(propname, propval) {
+function parsePropertyDefinition(propname, propval, schemaFn) {
     var propertySchema = new PropertySchema(propname, propval);
 
     if (propval.match(/^[$\[]/)) {
+
+        if (!propval.match(/^\$?\[(?:string|int|double)\([^\)]+\)/)) {
+            propval.val = 'invalid expression';
+            return propertySchema;
+        }
+        
         var defn = propval.match(/\[([^\]]+)\]/)[1];
-        //console.log('match', util.inspect(match));
+        var type = propertySchema.type = defn.match(/^[a-z]+/)[0];
+        var expression = defn.match(/\(([^\)]+)\)/)[1];
+        propertySchema.template = expression;
 
         var match;
-        if(match = defn.match(/=(.+)/)) {
-            propertySchema.type = 'xpn';
+        if(match = expression.match(/=(.+)/)) {
             propertySchema.template = match[1];
             propertySchema.updateFn = buildAdHocExpression(propertySchema);
+            if(type === 'double') {
+                var refProp;
+                var refPropMatch = propertySchema.template.match(/^([^\+\-\*\/]+)/);
+                if(refPropMatch) {
+                    propertySchema.numericType = getNumericTypeFromRefProp(schemaFn, refPropMatch[1]);
+                    if(!propertySchema.numericType) {
+                        propval.val = 'invalid expression';
+                        return propertySchema;
+                    }
+                }
+            }
         }
-        else if(match = defn.match(/string\(([^\)]+)\)/)) {
-            propertySchema.type = 'string';
-            propertySchema.template = match[1];
-            propertySchema.updateFn = getStringForCacheProp;
-        }
-        else if(match = defn.match(/double\(([^\)]+)\)/)) {
-            propertySchema.type = 'double';
-            propertySchema.template = match[1];
-            propertySchema.updateFn = getDoubleForCacheProp;
-        }
-        else if(match = defn.match(/int\(([^\)]+)\)/)) {
-            propertySchema.type = 'int';
-            propertySchema.template = match[1];
-            propertySchema.updateFn = getIntForCacheProp;
-        }
-        else if(match = defn.match(/chg\(([^\)]+)\)/)) {
-            propertySchema.type = 'chg';
+        else if(match = expression.match(/\^(.+)/)) {
             propertySchema.template = match[1];
             propertySchema.updateFn = getChangeForCacheProp;
             propertySchema.reportMode = '*';
+            if(type === 'double') {
+                propertySchema.numericType = getNumericTypeFromRefProp(schemaFn, propertySchema.template);
+                if(!propertySchema.numericType) {
+                    propval.val = 'invalid expression';
+                    return propertySchema;
+                }
+            }
         }
-
+        else {
+            if(propertySchema.type === 'string') {
+                propertySchema.updateFn = getStringForCacheProp;
+            }
+            else if(propertySchema.type === 'int') {
+                propertySchema.updateFn = getIntForCacheProp;
+            }
+            else if(propertySchema.type === 'double') {
+                propertySchema.updateFn = getDoubleForCacheProp;
+                var numericTypeMatch = expression.match(regexForDoubleExpression);
+                propertySchema.numericType = {
+                    scale:numericTypeMatch[1],
+                    precision:numericTypeMatch[2]
+                };
+            }
+        }
+            
         if (propval.match(/^\$/))
             propertySchema.isVolatile = false;
 
         if (match = propval.match(/([^\]]+)$/))
             propertySchema.reportMode = match[1];
 
-    }
-
+        }
+    
     return propertySchema;
+}
+function getNumericTypeFromRefProp(schemaFn, refPropName) {
+    if(refPropName) {
+        var refProp = schemaFn.prototype['__' + refPropName];
+        if(refProp) return refProp.numericType;
+    }
+    return null;
 }
 function buildAdHocExpression(propertySchema) {
     var fn = '(function getExpressionForCacheProp(cacheprop){ var val; with(cacheprop.item){ val = ' + propertySchema.template + ' } return val; })';
@@ -139,10 +175,10 @@ function getNumberForCacheProp(cacheprop, regex, fnGet) {
     return num;
 }
 function getDoubleForCacheProp(cacheprop) {
-    return getNumberForCacheProp(cacheprop, /(\d+)\:(\d+)(?:>(\d+)\:(\d+))?/, getDoubleFnFromMatch);
+    return getNumberForCacheProp(cacheprop, regexForDoubleExpression, getDoubleFnFromMatch);
 }
 function getIntForCacheProp(cacheprop) {
-    return getNumberForCacheProp(cacheprop, /(\d+)(?:-(\d+))?(?:>(\d+)(?:-(\d+))?)?/, getIntFnFromMatch);
+    return getNumberForCacheProp(cacheprop, regexForIntExpression, getIntFnFromMatch);
 }
 function getIntFnFromMatch(match, idx) {
     var from = 0, to = parseInt(match[idx]);
@@ -176,6 +212,7 @@ function getDouble(scale, precision) {
 var PropertySchema = function(propname, propval) {
     this.name = propname;
     this.type = null;
+    this.numericType = null;
     this.val = propval;
     this.isVolatile = true;
     this.template = null;
@@ -187,6 +224,9 @@ PropertySchema.prototype.isNumeric = function() {
 };
 
 
+function isNumeric(val) {
+    return ('' + val).match(/^[\d\.]+$/);
+}
 
 /*
 ==============================================================================================================
@@ -200,6 +240,7 @@ var CacheProperty = function(item, schema) {
     this.val = schema.val;
     this.updateCount = 0;
     this.change = 0;
+    this.initialUpdate = true;
     this.init();
 };
 CacheProperty.prototype.update =  function (iteration) {
@@ -219,11 +260,8 @@ CacheProperty.prototype.init =  function () {
 CacheProperty.prototype.updateProperty =  function () {
     if (this.schema.updateFn) {
         var newval = this.schema.updateFn(this);
-        if(this.isNumeric) {
-            newval = parseFloat(newval.toFixed(4)); // avoid floating point issues like '0.999999999999'
+        if(this.isNumeric) 
             this.change = newval - this.val;
-            this.change = parseFloat(this.change.toFixed(4));
-        }
         var propname = this.schema.name;
         this.val = this.item[propname] = newval;
         this.updateCount++;
@@ -245,6 +283,7 @@ CacheProperty.prototype.updateProperty =  function () {
 */
 var asSchemaFn = function () {
     this.proplist = [];
+    this.enabled = true;
     this.iteratePropNames = function (cb) {
         var my = this;
         var i = 0;
@@ -260,6 +299,7 @@ var asSchemaFn = function () {
         });
     }
     this.update = function (iteration) {
+        if(!this.enabled) return;
         var updatedProps = 0;
         if(iteration % this.volatility == 0) {
             this.iterateCacheProperties(function(prop, propnum){
@@ -289,10 +329,11 @@ var asSchemaFn = function () {
         this.iterateCacheProperties(function(prop, propnum){
             var propname = prop.schema.name;
             if(prop.schema.reportMode === '*' || my.reportPropYN(initial, updatedProps, propnum)) {
-                if(!report[propname]) {
-                    var val = my[propname]; 
-                    report[propname] = val;  
+                var val = my[propname]; 
+                if(prop.schema.type === 'double') {
+                    val = val.toFixed(prop.schema.numericType.precision);
                 }
+                report[propname] = '' + val;  
             }
         })
         cbReport(report);
@@ -364,7 +405,7 @@ Cache.prototype.subscribe = function (id, requestId, options) {
     options = _.extend({volatility:null, overrides: null}, options);
     var item = this.collectionIndex[id];
     if(item) {
-        this.log('subscribe', id + ' - already subscribed');
+        item.enabled = true;
     }
     else
     {
@@ -381,15 +422,27 @@ Cache.prototype.subscribe = function (id, requestId, options) {
     this.reportItem(item, true, null, requestId);
     this.start();
 };
+Cache.prototype.unSubscribe = function (id, requestId) {
+    var item = this.collectionIndex[id];
+    if(item) {
+        item.enabled = false;
+    }
+};
+Cache.prototype.unsubscribeAll = function (id, requestId) {
+     _.each(this.collection, function(item){
+        item.enabled = false;
+    });
+};
 Cache.prototype.updateCache = function () {
     var my = this;
     var iteration = this.iteration++;
     _.each(this.collection, function(item){
-        var updatedprops = item.update(iteration);
-        if(updatedprops) {
-            my.reportItem(item, false, updatedprops);
+        if(item.enabled){
+            var updatedprops = item.update(iteration);
+            if(updatedprops) {
+                my.reportItem(item, false, updatedprops);
+            }
         }
-        
     });
 };
 Cache.prototype.reportItem = function(item, initial, updatedprops, requestId) {
@@ -434,7 +487,7 @@ Cache.prototype.parseSchema = function (schema) {
     for (prop in schema) {
         if (schema.hasOwnProperty(prop)) {
             var propval = schema[prop];
-            var propSchema = parsePropertyDefinition(prop, propval);
+            var propSchema = parsePropertyDefinition(prop, propval, schemaFn);
             var protoSchemaProp = '__' + prop;
             schemaFn.prototype[protoSchemaProp] = propSchema;
             schemaFn.prototype.proplist.push(prop);

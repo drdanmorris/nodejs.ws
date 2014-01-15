@@ -63,7 +63,7 @@ var Connection = function(socket){
         port: socket.remotePort
     };
     this.connected = true;
-    this.wsproc = new wsProcessor(this, this.onData.bind(this));
+    this.wsproc = new wsProcessor(this, this.handleWsProcData.bind(this));
     this.wsproc.on('start', this.handleWsProcStart.bind(this));
     this.wsproc.on('error', this.handleWsProcError.bind(this));
 
@@ -94,7 +94,7 @@ Connection.prototype.close = function() {
 Connection.prototype.log = function(type, detail) {
     console.log('[Connection ' + this.connectionId + '] ' + type.toUpperCase() + ' - ' + (detail || '') );
 };
-Connection.prototype.onData = function(data) {
+Connection.prototype.handleWsProcData = function(data) {
     this.emit('data', data);
 };
 Connection.prototype.handleWsProcStart = function() {

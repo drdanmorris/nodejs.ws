@@ -59,35 +59,21 @@ Session.prototype.configureRequestProcessors = function() {
 	var my = this;
 	this.requestProcessor = {
 		subscribe: function(request) {
+			impl.cancelPreviousView();
 			var view = viewFactory.getView(request.vref);
-			this.sendView(view, request);
+			impl.sendView(view, request);
 		},
 		registerSchema: function(dref) {
-			var prefix = dref.match(/^\D+/)[0];
-			if(!this.registeredPrefixes) this.registeredPrefixes = {};
-			if(!this.registeredPrefixes[prefix]) {
-				var schema = null;
-				switch(prefix) {
-					case 'si' :
-						schema = {
-				    		dref: '$[=id]*',
-				            title: '$[string(Spot, {3:U}/{3:U})]',  
-				            b: '[double(5:3>1:1)]',
-				            a: '[=b+3]',
-				            chg: '[chg(b)]',
-				            chk: '[int(1-100)]'
-				    	};
-						break;
-				}
+			impl.registerSchema(dref);
+		}
+	};
 
-				if(schema) {
-					my.log('registerSchema', prefix);
-					my.cache.register(prefix, schema);
-					this.registeredPrefixes[prefix] = schema;
-				} 
-			}
-		},
-		sendView: function(view, request) {
+	var impl = {
+		registeredPrefixes: {}
+		,cancelPreviousView: function() {
+			my.cache.unsubscribeAll();
+		}
+		,sendView: function(view, request) {
 			var res = {
 				view: view,
 				isInitial: true,
@@ -101,37 +87,63 @@ Session.prototype.configureRequestProcessors = function() {
 			my.connection.send(res);
 			this.sendDrefsForView(view, request.requestId);
 			
-		},
-		findDrefsForView: function(view) {
+		}
+		,registerSchema: function(dref) {
+			var prefix = dref.match(/^\D+/)[0];
+			if(!impl.registeredPrefixes) impl.registeredPrefixes = {};
+			if(!impl.registeredPrefixes[prefix]) {
+				var schema = null;
+				switch(prefix) {
+					case 'si' :
+						schema = {
+				    		dref: '$[string(=id)]*',
+				            title: '$[string(Spot, {3:U}/{3:U})]',  
+				            b: '[double(5:3>1:1)]',
+				            a: '[double(=b+3)]',
+				            chg: '[double(^b)]',
+				            chk: '[int(1-100)]'
+				    	};
+						break;
+				}
+
+				if(schema) {
+					my.log('registerSchema', prefix);
+					my.cache.register(prefix, schema);
+					impl.registeredPrefixes[prefix] = schema;
+				} 
+			}
+		}
+		,findDrefsForView: function(view) {
 			var drefs = [];
 			this.findDrefs(view, drefs);
 			if(drefs.length > 0) {
 				view.drefs = drefs;
 			}
-		},
-		sendDrefsForView: function(view, requestId) {
+		}
+		,sendDrefsForView: function(view, requestId) {
 			if(view.drefs) {
 				for(var i = 0; i < view.drefs.length; i++) {
 					var dref = view.drefs[i];
 					this.subscribeToDref(dref, requestId);
 				}
 			}
-		},
-		findDrefs: function(obj, drefs) {
+		}
+		,findDrefs: function(obj, drefs) {
 			for(var prop in obj) {
 				if(typeof obj[prop] === 'object') {
 					this.findDrefs(obj[prop], drefs);
 				}
 				else if(prop === 'dref') drefs.push(obj[prop]);
 			}
-		},
-		subscribeToDref: function(dref, requestId) {
+		}
+		,subscribeToDref: function(dref, requestId) {
 			this.registerSchema(dref);
 			my.cache.subscribe(dref, requestId);
 		}
-		
 	};
+
 };
+
 Session.prototype.onConnectionData = function(buffer){
 	var json = buffer.toString('utf8'),
 		request = JSON.parse(json);
@@ -192,14 +204,25 @@ var viewFactory = {
 
 
 	menu: function(vref) {
-		return {
-			title : 'Watchlists',
-			items: [
-				{ title : "Popular Markets", navigateVref : "menupr/usr/wi100" },
-				{ title : "Top Risers", navigateVref : "menupr/usr/wi101" },
-				{ title : "Top Fallers", navigateVref : "menupr/usr/wi102" }
-			]
-		};
+		if(vref.subtype === 'usr') {
+			return {
+				title : 'Watchlists',
+				items: [
+					{ title : "Popular Markets", navigateVref : "menupr/usr/wi100" },
+					{ title : "Top Risers", navigateVref : "menupr/usr/wi101" },
+					{ title : "Top Fallers", navigateVref : "menupr/usr/wi102" }
+				]
+			};
+		}
+		else if(vref.subtype === 'home') {
+			return {
+				title : 'Browse',
+				items: [
+					{ title : "Shares", navigateVref : "menu/shares/0" },
+					{ title : "Indices", navigateVref : "menu/indices/0" },
+				]
+			};
+		}
 	},
 
 	menupr: function(vref) {

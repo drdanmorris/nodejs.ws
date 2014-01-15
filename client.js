@@ -12,11 +12,11 @@ client.connect(PORT, HOST, function() {
     	cmd: 'register',
     	prefix: 'si',
     	schema: {
-    		dref: '$[=id]*',
+    		dref: '$[string(=id)]*',
             title: '$[string(Spot, {3:U}/{3:U})]',  
             b: '[double(5:3>1:1)]',
-            a: '[=b+3]',
-            chg: '[chg(b)]',
+            a: '[double(=b+3)]',
+            chg: '[double(^b)]',
             chk: '[int(1-100)]'
     	}
     };
